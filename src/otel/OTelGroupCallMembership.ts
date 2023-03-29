@@ -95,7 +95,7 @@ interface CallTrackingInfo {
  */
 export class OTelGroupCallMembership {
   private callMembershipSpan?: Span;
-  private groupCallContext?: Context;
+  private callMembershipContext?: Context;
   private myUserId: string;
   private myDeviceId: string;
   private myMember: RoomMember;
@@ -104,6 +104,7 @@ export class OTelGroupCallMembership {
     span: Span | undefined;
     stats: OTelStatsReportEvent[];
   };
+  private readonly speakingSpans = new Map<RoomMember, Map<string, Span>>();
 
   constructor(private groupCall: GroupCall, client: MatrixClient) {
     const userId = client.getUserId();
@@ -145,7 +146,7 @@ export class OTelGroupCallMembership {
       this.myMember ? this.myMember.name : "unknown-name"
     );
 
-    this.groupCallContext = opentelemetry.trace.setSpan(
+    this.callMembershipContext = opentelemetry.trace.setSpan(
       opentelemetry.context.active(),
       this.callMembershipSpan
     );
@@ -154,10 +155,11 @@ export class OTelGroupCallMembership {
   }
 
   public onLeaveCall() {
-    this.callMembershipSpan?.addEvent("matrix.leaveCall");
-
-    // and end the main span to indicate we've left
-    this.callMembershipSpan?.end();
+    this.callMembershipSpan!.addEvent("matrix.leaveCall");
+    // and end the span to indicate we've left
+    this.callMembershipSpan!.end();
+    this.callMembershipSpan = undefined;
+    this.callMembershipContext = undefined;
   }
 
   public onUpdateRoomState(event: MatrixEvent) {
@@ -182,7 +184,7 @@ export class OTelGroupCallMembership {
           const span = ElementCallOpenTelemetry.instance.tracer.startSpan(
             `matrix.call`,
             undefined,
-            this.groupCallContext
+            this.callMembershipContext
           );
           // XXX: anonymity
           span.setAttribute("matrix.call.target.userId", userId);
@@ -304,15 +306,45 @@ export class OTelGroupCallMembership {
         this.myMember ? this.myMember.name : "unknown-name"
       );
 
-      this.statsReportSpan.span.addEvent(event.type, event.data);
+      this.statsReportSpan.span.addEvent(event.type as string, event.data);
       this.statsReportSpan.stats.push(event);
     } else if (
       this.statsReportSpan.span !== undefined &&
       this.callMembershipSpan
     ) {
-      this.statsReportSpan.span.addEvent(event.type, event.data);
+      this.statsReportSpan.span.addEvent(event.type as string, event.data);
       this.statsReportSpan.span.end();
       this.statsReportSpan = { span: undefined, stats: [] };
+    }
+  }
+
+  public onSpeaking(member: RoomMember, deviceId: string, speaking: boolean) {
+    if (speaking) {
+      // Ensure that there's an audio activity span for this speaker
+      let deviceMap = this.speakingSpans.get(member);
+      if (deviceMap === undefined) {
+        deviceMap = new Map();
+        this.speakingSpans.set(member, deviceMap);
+      }
+
+      if (!deviceMap.has(deviceId)) {
+        const span = ElementCallOpenTelemetry.instance.tracer.startSpan(
+          "matrix.audioActivity",
+          undefined,
+          this.callMembershipContext
+        );
+        span.setAttribute("matrix.userId", member.userId);
+        span.setAttribute("matrix.displayName", member.rawDisplayName);
+
+        deviceMap.set(deviceId, span);
+      }
+    } else {
+      // End the audio activity span for this speaker, if any
+      const deviceMap = this.speakingSpans.get(member);
+      deviceMap?.get(deviceId)?.end();
+      deviceMap?.delete(deviceId);
+
+      if (deviceMap?.size === 0) this.speakingSpans.delete(member);
     }
   }
 }
