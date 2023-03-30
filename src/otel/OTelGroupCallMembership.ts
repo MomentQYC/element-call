@@ -155,9 +155,9 @@ export class OTelGroupCallMembership {
   }
 
   public onLeaveCall() {
-    this.callMembershipSpan!.addEvent("matrix.leaveCall");
+    this.callMembershipSpan?.addEvent("matrix.leaveCall");
     // and end the span to indicate we've left
-    this.callMembershipSpan!.end();
+    this.callMembershipSpan?.end();
     this.callMembershipSpan = undefined;
     this.callMembershipContext = undefined;
   }
@@ -224,13 +224,15 @@ export class OTelGroupCallMembership {
     const eventType = event.eventType as string;
     if (!eventType.startsWith("m.call")) return;
 
+    const callTrackingInfo = this.callsByCallId.get(call.callId);
+
     if (event.type === "toDevice") {
-      this.callMembershipSpan?.addEvent(
+      callTrackingInfo.span.addEvent(
         `matrix.sendToDeviceEvent_${event.eventType}`,
         flattenVoipEvent(event)
       );
     } else if (event.type === "sendEvent") {
-      this.callMembershipSpan?.addEvent(
+      callTrackingInfo.span.addEvent(
         `matrix.sendToRoomEvent_${event.eventType}`,
         flattenVoipEvent(event)
       );
