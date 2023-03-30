@@ -23,12 +23,14 @@ import {
 } from "matrix-js-sdk";
 import { logger } from "matrix-js-sdk/src/logger";
 import {
+  CallError,
   CallState,
   MatrixCall,
   VoipEvent,
 } from "matrix-js-sdk/src/webrtc/call";
 import {
   CallsByUserAndDevice,
+  GroupCallError,
   GroupCallEvent,
 } from "matrix-js-sdk/src/webrtc/groupCall";
 import { GroupCallStatsReport } from "matrix-js-sdk/src/webrtc/groupCall";
@@ -242,6 +244,37 @@ export class OTelGroupCallMembership {
     }
   }
 
+  public onReceivedVoipEvent(event: MatrixEvent) {
+    // These come straight from CallEventHandler so don't have
+    // a call already associated (in principle we could receive
+    // events for calls we don't know about).
+    const callId = event.getContent().call_id;
+    if (!callId) {
+      this.callMembershipSpan?.addEvent("matrix.receive_voip_event_no_callid", {
+        "sender.userId": event.getSender(),
+      });
+      logger.error("Received call event with no call ID!");
+      return;
+    }
+
+    const call = this.callsByCallId.get(callId);
+    if (!call) {
+      this.callMembershipSpan?.addEvent(
+        "matrix.receive_voip_event_unknown_callid",
+        {
+          "sender.userId": event.getSender(),
+        }
+      );
+      logger.error("Received call event for unknown call ID " + callId);
+      return;
+    }
+
+    call.span.addEvent("matrix.receive_voip_event", {
+      "sender.userId": event.getSender(),
+      ...flattenVoipEvent(event.getContent()),
+    });
+  }
+
   public onToggleMicrophoneMuted(newValue: boolean) {
     this.callMembershipSpan?.addEvent("matrix.toggleMicMuted", {
       "matrix.microphone.muted": newValue,
@@ -351,6 +384,26 @@ export class OTelGroupCallMembership {
 
       if (deviceMap?.size === 0) this.speakingSpans.delete(member);
     }
+  }
+
+  public onCallError(error: CallError, call: MatrixCall) {
+    const callTrackingInfo = this.callsByCallId.get(call.callId);
+    if (!callTrackingInfo) {
+      logger.error(`Got error for unknown call ID ${call.callId}`);
+      return;
+    }
+
+    callTrackingInfo.span.recordException(error);
+  }
+
+  public onGroupCallError(error: GroupCallError) {
+    this.callMembershipSpan?.recordException(error);
+  }
+
+  public onUndecryptableToDevice(event: MatrixEvent) {
+    this.callMembershipSpan?.addEvent("matrix.toDevice.undecryptable", {
+      "sender.userId": event.getSender(),
+    });
   }
 }
 
