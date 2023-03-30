@@ -208,6 +208,11 @@ export function useGroupCall(
     []
   );
 
+  const leaveCall = useCallback(() => {
+    groupCallOTelMembership?.onLeaveCall();
+    groupCall.leave();
+  }, [groupCall]);
+
   useEffect(() => {
     // disable the media action keys, otherwise audio elements get paused when
     // the user presses media keys or unplugs headphones, etc.
@@ -430,12 +435,12 @@ export function useGroupCall(
         GroupCallStatsReportEvent.ByteSentStats,
         onByteSentStatsReport
       );
-      groupCall.leave();
+      leaveCall();
     };
-  }, [groupCall, updateState]);
+  }, [groupCall, updateState, leaveCall]);
 
   usePageUnload(() => {
-    groupCall.leave();
+    leaveCall();
   });
 
   const initLocalCallFeed = useCallback(
@@ -461,11 +466,6 @@ export function useGroupCall(
 
     groupCallOTelMembership?.onJoinCall();
   }, [groupCall, updateState]);
-
-  const leave = useCallback(() => {
-    groupCallOTelMembership?.onLeaveCall();
-    groupCall.leave();
-  }, [groupCall]);
 
   const toggleLocalVideoMuted = useCallback(() => {
     const toggleToMute = !groupCall.isLocalVideoMuted();
@@ -599,7 +599,7 @@ export function useGroupCall(
     error,
     initLocalCallFeed,
     enter,
-    leave,
+    leave: leaveCall,
     toggleLocalVideoMuted,
     toggleMicrophoneMuted,
     toggleScreensharing,
