@@ -435,6 +435,7 @@ export function useGroupCall(
         GroupCallStatsReportEvent.ByteSentStats,
         onByteSentStatsReport
       );
+
       leaveCall();
     };
   }, [groupCall, updateState, leaveCall]);
